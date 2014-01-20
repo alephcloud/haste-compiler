@@ -1,11 +1,12 @@
-{-# LANGUAGE ForeignFunctionInterface, OverloadedStrings #-}
+{-# LANGUAGE ForeignFunctionInterface, OverloadedStrings, CPP #-}
 module Haste.DOM (
     Elem (..), PropID, ElemID,
     newElem, newTextElem,
-    elemById, setProp, getProp, setProp', getProp', getValue,
-    withElem, withElems, addChild, addChildBefore, removeChild,
-    clearChildren, getChildBefore, getLastChild, getChildren,
-    setChildren, getStyle, setStyle, getStyle', setStyle'
+    elemById, setProp, getProp, setAttr, getAttr, setProp',
+    getProp', getValue, withElem , withElems, addChild,
+    addChildBefore, removeChild, clearChildren , getChildBefore,
+    getLastChild, getChildren, setChildren , getStyle, setStyle,
+    getStyle', setStyle'
   ) where
 import Haste.Prim
 import Haste.JSType
@@ -16,8 +17,11 @@ newtype Elem = Elem JSAny
 type PropID = String
 type ElemID = String
 
+#ifdef __HASTE__
 foreign import ccall jsGet :: Elem -> JSString -> IO JSString
 foreign import ccall jsSet :: Elem -> JSString -> JSString -> IO ()
+foreign import ccall jsGetAttr :: Elem -> JSString -> IO JSString
+foreign import ccall jsSetAttr :: Elem -> JSString -> JSString -> IO ()
 foreign import ccall jsGetStyle :: Elem -> JSString -> IO JSString
 foreign import ccall jsSetStyle :: Elem -> JSString -> JSString -> IO ()
 foreign import ccall jsFind :: JSString -> IO (Ptr (Maybe Elem))
@@ -31,6 +35,25 @@ foreign import ccall jsAddChildBefore :: Elem -> Elem -> Elem -> IO ()
 foreign import ccall jsGetChildBefore :: Elem -> IO (Ptr (Maybe Elem))
 foreign import ccall jsKillChild :: Elem -> Elem -> IO ()
 foreign import ccall jsClearChildren :: Elem -> IO ()
+#else
+jsGet = error "Tried to use jsGet on server side!"
+jsSet = error "Tried to use jsSet on server side!"
+jsGetAttr = error "Tried to use jsGetAttr on server side!"
+jsSetAttr = error "Tried to use jsSetAttr on server side!"
+jsGetStyle = error "Tried to use jsGetStyle on server side!"
+jsSetStyle = error "Tried to use jsSetStyle on server side!"
+jsFind = error "Tried to use jsFind on server side!"
+jsCreateElem = error "Tried to use jsCreateElem on server side!"
+jsCreateTextNode = error "Tried to use jsCreateTextNode on server side!"
+jsAppendChild = error "Tried to use jsAppendChild on server side!"
+jsGetLastChild = error "Tried to use jsGetLastChild on server side!"
+jsGetChildren = error "Tried to use jsGetChildren on server side!"
+jsSetChildren = error "Tried to use jsSetChildren on server side!"
+jsAddChildBefore = error "Tried to use jsAddChildBefore on server side!"
+jsGetChildBefore = error "Tried to use jsGetChildBefore on server side!"
+jsKillChild = error "Tried to use jsKillChild on server side!"
+jsClearChildren = error "Tried to use jsClearChildren on server side!"
+#endif
 
 -- | Append the first element as a child of the second element.
 addChild :: MonadIO m => Elem -> Elem -> m ()
@@ -78,6 +101,10 @@ setProp e prop val = liftIO $ jsSet e (toJSStr prop) (toJSStr val)
 setProp' :: MonadIO m => Elem -> JSString -> JSString -> m ()
 setProp' e prop val = liftIO $ jsSet e prop val
 
+-- | Set an attribute of the given element.
+setAttr :: MonadIO m => Elem -> PropID -> String -> m ()
+setAttr e prop val = liftIO $ jsSetAttr e (toJSStr prop) (toJSStr val)
+
 -- | Get the value property of an element; a handy shortcut.
 getValue :: (MonadIO m, JSType a) => Elem -> m (Maybe a)
 getValue e = liftIO $ fromJSString `fmap` jsGet e "value"
@@ -89,6 +116,10 @@ getProp e prop = liftIO $ fromJSStr `fmap` jsGet e (toJSStr prop)
 -- | Get a property of an element, JSString edition.
 getProp' :: MonadIO m => Elem -> JSString -> m JSString
 getProp' e prop = liftIO $ jsGet e prop
+
+-- | Get an attribute of an element.
+getAttr :: MonadIO m => Elem -> PropID -> m String
+getAttr e prop = liftIO $ fromJSStr `fmap` jsGetAttr e (toJSStr prop)
 
 -- | Get a CSS style property of an element.
 getStyle :: MonadIO m => Elem -> PropID -> m String

@@ -106,19 +106,27 @@ You should also have a look at the documentation and/or source code for
 small programs in the `examples` directory, to get started.
 
 
+Interfacing with Javascript
+---------------------------
+
+When writing programs you will probably want to use some native Javascript
+in your program; bindings to native libraries, for instance. There are two ways
+of doing this. You can either use the GHC FFI as described in
+`doc/js-externals.txt`, or you can use the Fay-like `ffi` function:
+
+    addTwo :: Int -> Int -> IO Int
+    addTwo = ffi "(function(x, y) {return x + y;})"
+
+The `ffi` function is a little bit safer than the GHC FFI in that it enforces
+some type invariants on values returned from JS, and is more convenient. It is,
+however, quite a bit slower due to its dynamic nature.
+
+
 Base library and documentation
 ------------------------------
 
-It is possible to build Haddock documentation for `haste-lib` using
-`standalone-haddock`:
-
-    cabal install standalone-haddock
-    standalone-haddock --package-db ~/.haste/packages -o doc path/to/fursuit path/to/haste-lib
-
-Since `standalone-haddock` seems to have some trouble with modules exporting
-modules, you may want to comment out the `Other-Modules` line in
-`fursuit.cabal` and `haste-lib.cabal` beforehand, effectively exporting all
-modules in those packages.
+You can build your own set of docs for haste-lib and fursuit by running
+`cabal haddock` in their respective directories as with any other package.
 
 Or you could just look at [the online docs](http://ekblad.cc/haste-doc).
 It may or may not be up to date with the current Haste version.
@@ -173,8 +181,6 @@ replacement for GHC that generates relatively lean code.
 
 Known issues
 ------------
-
-* No 64-bit math yet. Use `Integer` if you need large integers.
 
 * Not all GHC primops are implemented; if you encounter an unimplemented
   primop, I'd be happy if you'd report it together with a small test case that

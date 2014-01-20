@@ -1,5 +1,5 @@
 Name:           haste-compiler
-Version:        0.2.9
+Version:        0.2.10
 License:        BSD3
 License-File:   LICENSE
 Synopsis:       Haskell To ECMAScript compiler
@@ -26,6 +26,7 @@ Data-Files:
     MVar.js
     StableName.js
     Integer.js
+    Int64.js
     md5.js
     array.js
     pointers.js
