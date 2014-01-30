@@ -29,7 +29,7 @@ argSpecs = [
     ArgSpec { optName = "opt-all",
               updateCfg = optAllSafe,
               info = "Enable all safe optimizations. "
-                     ++ "Equivalent to -O2 --opt-google-closure."},
+                     ++ "Equivalent to -O2 --opt-google-closure --opt-whole-program."},
     ArgSpec { optName = "opt-all-unsafe",
               updateCfg = optAllUnsafe,
               info = "Enable all safe and unsafe optimizations.\n"
@@ -83,8 +83,7 @@ argSpecs = [
     ArgSpec { optName = "trace-primops",
               updateCfg = \cfg _ -> cfg {tracePrimops = True,
                                          rtsLibs = debugLib : rtsLibs cfg},
-              info = "Turn on run-time tracing of primops. Also turned on by "
-                   ++ "-debug."},
+              info = "Turn on run-time tracing of primops."},
     ArgSpec { optName = "verbose",
               updateCfg = \cfg _ -> cfg {verbose = True},
               info = "Display even the most obnoxious warnings."},
@@ -116,7 +115,7 @@ unsafeMath = vagueInts ||| unsafeMul
 
 -- | Enable all optimizations, both safe and unsafe.
 optAllUnsafe :: Config -> [String] -> Config
-optAllUnsafe = optAllSafe ||| unsafeMath
+optAllUnsafe = optAllSafe ||| unsafeMath ||| enableWholeProgramOpts
 
 -- | Enable all safe optimizations.
 optAllSafe :: Config -> [String] -> Config
