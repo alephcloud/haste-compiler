@@ -1,19 +1,18 @@
 {-# LANGUAGE ForeignFunctionInterface, EmptyDataDecls, CPP #-}
-module Haste (JSString, JSAny, URL,
-              alert, prompt, eval, writeLog, catJSStr, fromJSStr,
-              module Haste.JSType, module Haste.DOM,
-              module Haste.Callback, module Haste.Random,
-              module Haste.Foreign) where
+module Haste (
+    JSString, JSAny, URL, CB.GenericCallback,
+    alert, prompt, eval, writeLog, catJSStr, fromJSStr,
+    module Haste.JSType, module Haste.DOM, module Haste.Callback,
+    module Haste.Random, module Haste.Hash
+  ) where
 import Haste.Prim
-import Haste.Callback
+import Haste.Callback hiding (jsSetCB, jsSetTimeout, GenericCallback)
+import qualified Haste.Callback as CB (GenericCallback)
 import Haste.Random
 import Haste.JSType
 import Haste.DOM
-import Haste.Foreign
+import Haste.Hash
 import Control.Monad.IO.Class
-#ifndef __HASTE__
-import Data.List (intercalate)
-#endif
 
 #ifdef __HASTE__
 foreign import ccall jsAlert  :: JSString -> IO ()
@@ -31,8 +30,6 @@ jsEval   :: JSString -> IO JSString
 jsEval = error "Tried to use jsEval on server side!"
 #endif
 
-type URL = String
-
 -- | Javascript alert() function.
 alert :: MonadIO m => String -> m ()
 alert = liftIO . jsAlert . toJSStr
@@ -44,18 +41,9 @@ prompt q = liftIO $ do
   return (fromJSStr a)
 
 -- | Javascript eval() function.
-eval :: MonadIO m => String -> m String
-eval js = liftIO $ jsEval (toJSStr js) >>= return . fromJSStr
+eval :: MonadIO m => JSString -> m JSString
+eval = liftIO . jsEval
 
 -- | Use console.log to write a message.
 writeLog :: MonadIO m => String -> m ()
 writeLog = liftIO . jsLog . toJSStr
-
--- | Concatenate a series of JSStrings using the specified separator.
-catJSStr :: JSString -> [JSString] -> JSString
-#ifdef __HASTE__
-foreign import ccall jsCat    :: Ptr [JSString] -> JSString -> JSString
-catJSStr sep strs = jsCat (toPtr strs) sep
-#else
-catJSStr sep strs = toJSStr $ intercalate (fromJSStr sep) (map fromJSStr strs)
-#endif
