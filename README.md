@@ -3,20 +3,26 @@ Haste
 
 A compiler to generate Javascript code from Haskell.
 
+It even has a [website](http://haste-lang.org) and a
+[mailing list](https://groups.google.com/d/forum/haste-compiler).
+
 Features
 --------
 
+* Seamless, type-safe single program framework for client-server communication
+* Support for modern web technologies such as WebSockets, WebStorage and Canvas
+* Simple Javascript interoperability
 * Generates small, fast programs
 * Supports all GHC extensions except Template Haskell
 * Uses standard Haskell libraries
 * Cabal integration
+* Simple, one-step build; no need for error prone Rube Goldberg machines of
+  Vagrant, VirtualBox, GHC sources and other black magic
 * Concurrency and MVars with Haste.Concurrent
 * Unboxed arrays, ByteArrays, StableNames and other low level features
 * Low-level DOM base library
 * Easy integration with Google's Closure compiler
 * Works on Windows, GNU/Linux and Mac OS X
-* Simple, one-step build; no need for error prone Rube Goldberg machines of
-  Vagrant, VirtualBox, GHC sources and other black magic
 
 
 Installation
@@ -98,7 +104,7 @@ Finally, you can interact with Javascript code using the FFI. See
 `doc/js-externals.txt` for more information about that.
 
 For more information on how Haste works, see
-[the Haste Report](http://ekblad.cc/hastereport.pdf "Haste Report"),
+[the Haste Report](http://haste-lang.org/hastereport.pdf "Haste Report"),
 though beware that parts of Haste may have changed quite a bit.
 
 You should also have a look at the documentation and/or source code for
@@ -106,22 +112,86 @@ You should also have a look at the documentation and/or source code for
 small programs in the `examples` directory, to get started.
 
 
+Interfacing with Javascript
+---------------------------
+
+When writing programs you will probably want to use some native Javascript
+in your program; bindings to native libraries, for instance. There are two ways
+of doing this. You can either use the GHC FFI as described in
+`doc/js-externals.txt`, or you can use the Fay-like `ffi` function:
+
+    addTwo :: Int -> Int -> IO Int
+    addTwo = ffi "(function(x, y) {return x + y;})"
+
+The `ffi` function is a little bit safer than the GHC FFI in that it enforces
+some type invariants on values returned from JS, and is more convenient. It is,
+however, quite a bit slower due to its dynamic nature.
+
+If you do not feel comfortable throwing out your entire legacy Javascript
+code base, you can export selected functions from your Haste program and call
+them from Javascript:
+
+fun.hs:
+
+    import Haste.Foreign
+    
+    fun :: Int -> String -> IO String
+    fun n s = return $ "The number is " ++ show n ++ " and the string is " ++ s
+    
+    main = do
+      export "fun" fun
+
+fun.js:
+
+    function mymain() {
+      console.log(Haste.fun(42, "hello"));
+    }
+
+...then compile with:
+
+    $ hastec '--start=%%(); mymain();' --with-js=fun.js fun.hs
+
+`fun.hs` will export the function `fun` when its `main` function is run.
+Our Javascript obviously needs to run after that, so we create our "real" main
+function in `fun.js`. Finally, we tell the compiler to start the program by
+first executing Haste's `main` function (the `%%` gets replaced by whatever
+name the compiler chooses for the Haste `main`) and then executing our own
+`mymain`.
+
+
+Effortless type-safe client-server communication
+------------------------------------------------
+
+Using the framework from the `Haste.App` module hierarchy, you can easily write
+web applications that communicate with a server without having to write a
+single line of AJAX/WebSockets/whatever. Best of all: it's completely type
+safe.
+
+In essence, you write your web application as a single program - no more forced
+separation of your client and server code. You then compile your program once
+using Haste and once using GHC, and the two compilers will magically generate
+client and server code respectively.
+
+You will need to have the same libraries installed with both Haste and vanilla
+GHC (unless you use conditional compilation to get around this).
+`haste-compiler` comes bundled with all of `fursuit` and `haste-lib`, so you
+only need to concern yourself with this if you're using third party libraries.
+
+Examples of Haste.App in action is available in `examples/haste-app` and
+`examples/chatbox`.
+
+For more information about how exactly this works, see this
+[draft paper](http://haste-lang.org/icfp14.pdf).
+
+
 Base library and documentation
 ------------------------------
 
-It is possible to build Haddock documentation for `haste-lib` using
-`standalone-haddock`:
+You can build your own set of docs for haste-lib and fursuit by running
+`cabal haddock` in the Haste base directory as with any other package.
 
-    cabal install standalone-haddock
-    standalone-haddock --package-db ~/.haste/packages -o doc path/to/fursuit path/to/haste-lib
-
-Since `standalone-haddock` seems to have some trouble with modules exporting
-modules, you may want to comment out the `Other-Modules` line in
-`fursuit.cabal` and `haste-lib.cabal` beforehand, effectively exporting all
-modules in those packages.
-
-Or you could just look at [the online docs](http://ekblad.cc/haste-doc).
-It may or may not be up to date with the current Haste version.
+Or you could just look at
+[the online docs](http://hackage.haskell.org/package/haste-compiler).
 
 
 Reactive web EDSL
@@ -160,7 +230,9 @@ Libraries
 Haste is able to use standard Haskell libraries. However, some primitive
 operations are still not implemented which means that any code making use 
 of them will give you a compiler warning, then die at runtime with an angry
-error. This is currently being worked on.
+error. Some libraries also depend on external C code - if you wish to use such
+a library, you will need to port the C bits to Javascript yourself (perhaps
+using Escripten) and link them into your program using `--with-js`.
 
 
 Why yet another Haskell to Javascript compiler?
@@ -174,11 +246,6 @@ replacement for GHC that generates relatively lean code.
 Known issues
 ------------
 
-* No 64-bit math yet. Use `Integer` if you need large integers.
-
 * Not all GHC primops are implemented; if you encounter an unimplemented
-  primop, I'd be happy if you'd report it together with a small test case that
-  demonstrates the problem.
-
-* A program that throws unhandled exceptions may not always give a nice error
-  message.
+  primop, please report it together with a small test case that demonstrates
+  the problem.

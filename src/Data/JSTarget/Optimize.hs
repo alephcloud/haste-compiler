@@ -17,22 +17,25 @@ optimizeFun :: Var -> AST Exp -> AST Exp
 optimizeFun f (AST ast js) =
   flip runTravM js $ do
     shrinkCase ast
-    >>= inlineAssigns True
+    >>= inlineAssigns
     >>= optimizeArrays
     >>= inlineReturns
     >>= zapJSStringConversions
     >>= optimizeThunks
     >>= optimizeArrays
+    >>= optUnsafeEval
     >>= tailLoopify f
     >>= ifReturnToTernary
 
 topLevelInline :: AST Stm -> AST Stm
 topLevelInline (AST ast js) =
   flip runTravM js $ do
-    inlineAssigns False ast
+    inlineAssigns ast
     >>= optimizeArrays
     >>= optimizeThunks
     >>= optimizeArrays
+    >>= zapJSStringConversions
+    >>= optUnsafeEval
 
 -- | Attempt to turn two case branches into a ternary operator expression.
 tryTernary :: Var
@@ -96,9 +99,10 @@ replaceEx trav old new =
 --   Ignores LhsExp assignments, since we only introduce those when we actually
 --   care about the assignment side effect.
 --
---   TODO: don't inline thunks into functions!
-inlineAssigns :: JSTrav ast => Bool -> ast -> TravM ast
-inlineAssigns blackholeOK ast = do
+--   Note: a thunk may ONLY be inlined into a lambda if it performs no useful
+--         work, to avoid computing expensive thunks more than once.
+inlineAssigns :: JSTrav ast => ast -> TravM ast
+inlineAssigns ast = do
     inlinable <- gatherInlinable ast
     mapJS (const True) return (inl inlinable) ast
   where
@@ -112,12 +116,17 @@ inlineAssigns blackholeOK ast = do
           case M.lookup lhs m of
             Just occ | occ == occursLocal ->
               case occ of
-                -- Never-used symbols don't need assignment.
-                Never | blackholeOK -> do
-                  return (Assign blackHole ex next)
                 -- Inline of any non-lambda value
                 Once | mayReorder -> do
-                  replaceEx (not <$> isShared) (Var lhs) ex next
+                  if computingThunk ex
+                    then do
+                      let notSharedOrLambda = (not <$> (isShared .|. isLambda))
+                      occs <- occurrences notSharedOrLambda (varOccurs lhs) next
+                      if occs == Once
+                        then replaceEx notSharedOrLambda (Var lhs) ex next
+                        else return keep
+                    else do
+                      replaceEx (not <$> isShared) (Var lhs) ex next
                 -- Don't inline lambdas, but use less verbose syntax.
                 _    | Fun Nothing vs body <- ex,
                        Internal lhsname _ <- lhs -> do
@@ -129,7 +138,6 @@ inlineAssigns blackholeOK ast = do
         else do
           return keep
     inl _ stm = return stm
-
 
 -- | Turn if(foo) {return bar;} else {return baz;} into return foo ? bar : baz.
 ifReturnToTernary :: JSTrav ast => ast -> TravM ast
@@ -160,8 +168,12 @@ zapJSStringConversions :: JSTrav ast => ast -> TravM ast
 zapJSStringConversions ast =
     mapJS (const True) opt return ast
   where
-    opt (Call _ _ (Var (Foreign "toJSStr"))
-       [Call _ _ (Var (Foreign "unCStr")) [x]]) =
+    opt (Call _ _ (Var (Foreign "toJSStr")) [
+           Call _ _ (Var (Foreign "unCStr")) [x]]) =
+      return x
+    opt (Call _ _ (Var (Foreign "toJSStr")) [
+           Call _ _ (Var (Foreign "E")) [
+             Call _ _ (Var (Foreign "unCStr")) [x]]]) =
       return x
     opt (Call _ _ (Var (Foreign "new T"))
          [Fun _ [] (Return x@(Call _ _ (Var (Foreign "unCStr")) [Lit _]))]) =
@@ -177,6 +189,8 @@ zapJSStringConversions ast =
 --     => x
 --   E(\x ... -> ...)
 --     => \x ... -> ...
+--   thunk(x) where x is non-computing
+--     => x
 optimizeThunks :: JSTrav ast => ast -> TravM ast
 optimizeThunks ast =
     mapJS (const True) optEx return ast
@@ -186,9 +200,10 @@ optimizeThunks ast =
       | Fun _ _ _ <- x           = return x
     optEx (Call arity calltype f args) | Just f' <- fromThunkEx f =
       return $ Call arity calltype f' args
+    optEx ex | Just ex' <- fromThunkEx ex, not (computingEx ex') =
+      return ex'
     optEx ex =
       return ex
-
 
 -- | Unpack the given expression if it's a thunk.
 fromThunk :: Exp -> Maybe Stm
@@ -205,6 +220,44 @@ fromThunkEx ex =
   case fromThunk ex of
     Just (Return ex') -> Just ex'
     _                 -> Nothing
+
+-- | Is the given expression a thunk which when evaluated performs some kind of
+--   computation?
+computingThunk :: Exp -> Bool
+computingThunk e =
+  case fromThunkEx e of
+    Just e' -> computingEx e'
+    _       -> False
+
+-- | Does the given expression compute something? An expression is
+--   non-computing if it is a variable, a literal, a lambda abstraction,
+--   a thunk or an array which only has non-computing elements.
+computingEx :: Exp -> Bool
+computingEx ex =
+  case ex of
+    Var _                     -> False
+    Lit _                     -> False
+    Verbatim _                -> False
+    Fun _ _ _                 -> False
+    Arr arr                   -> any computingEx arr
+    e | Just t <- fromThunk e -> False
+      | otherwise             -> True
+
+-- | When possible, optimize ffi "x" into x.
+optUnsafeEval :: JSTrav ast => ast -> TravM ast
+optUnsafeEval = mapJS (const True) opt return
+  where
+    opt ex =
+      case ex of
+        (Call ar c (Var (Internal
+          (Name "unsafeEval" (Just (pkg, "Haste.Foreign"))) _))
+          (Arr [Lit (LNum 0), Lit (LStr s)] : args))
+          | take 9 pkg == "haste-lib" -> do
+            case args of
+              [] -> return $ Verbatim s
+              _  -> return $ Call (ar-1) c (Verbatim s) args
+        _ -> do
+          return ex
 
 
 -- | Gather a map of all inlinable symbols; that is, the once that are used
@@ -373,5 +426,6 @@ tailLoopify f fun@(Fun mname args body) = do
     contains (Arr xs) var         = any (`contains` var) xs
     contains (AssignEx l r) var   = l `contains` var || r `contains` var
     contains (IfEx c t e) var     = any (`contains` var) [c,t,e]
+    contains (Verbatim _) _       = False
 tailLoopify _ fun = do
   return fun

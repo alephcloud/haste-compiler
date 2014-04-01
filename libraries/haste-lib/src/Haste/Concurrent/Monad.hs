@@ -1,14 +1,24 @@
-{-# LANGUAGE GADTs, TypeFamilies, FlexibleInstances, FlexibleContexts #-}
+{-# LANGUAGE GADTs, TypeFamilies, FlexibleInstances, FlexibleContexts, CPP #-}
 -- | Implements concurrency for Haste based on "A Poor Man's Concurrency Monad".
 module Haste.Concurrent.Monad (
-    MVar, CIO, ToConcurrent (..),
+    MVar, CIO, ToConcurrent (..), MonadConc (..),
     forkIO, forkMany, newMVar, newEmptyMVar, takeMVar, putMVar, withMVarIO,
     peekMVar, modifyMVarIO, concurrent, liftIO
   ) where
 import Control.Monad.IO.Class
 import Control.Monad.Cont.Class
 import Control.Monad
+import Control.Applicative
 import Data.IORef
+
+-- | Any monad which supports concurrency.
+class Monad m => MonadConc m where
+  liftConc :: CIO a -> m a
+  fork     :: m () -> m ()
+
+instance MonadConc CIO where
+  liftConc = id
+  fork = forkIO
 
 -- | Embed concurrent computations into non-concurrent ones.
 class ToConcurrent a where
@@ -44,6 +54,15 @@ newtype CIO a = C {unC :: (a -> Action) -> Action}
 instance Monad CIO where
   return x    = C $ \next -> next x
   (C m) >>= f = C $ \b -> m (\a -> unC (f a) b)
+
+instance Functor CIO where
+  fmap f m = do
+    x <- m
+    return $ f x
+
+instance Applicative CIO where
+  (<*>) = ap
+  pure  = return
 
 instance MonadIO CIO where
   liftIO m = C $ \next -> Atom (fmap next m)
@@ -124,6 +143,7 @@ modifyMVarIO v m = do
 --   share MVars; if this is the case, then a call to `concurrent` may return
 --   before all the threads it spawned finish executing.
 concurrent :: CIO () -> IO ()
+#ifdef __HASTE__
 concurrent (C m) = scheduler [m (const Stop)]
   where
     scheduler (p:ps) =
@@ -137,3 +157,6 @@ concurrent (C m) = scheduler [m (const Stop)]
           scheduler ps
     scheduler _ =
       return ()
+#else
+concurrent = error "concurrent called in a non-browser environment!"
+#endif

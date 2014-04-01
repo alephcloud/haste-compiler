@@ -1,14 +1,30 @@
 {-# LANGUAGE ForeignFunctionInterface, OverloadedStrings, PatternGuards, 
-             FlexibleInstances #-}
+             FlexibleInstances, CPP #-}
 -- | Haste-specific JSON library. JSON is common enough that it's a good idea
 --   to create as fast and small an implementation as possible. To that end,
 --   the parser is implemented entirely in Javascript, and works with any
 --   browser that supports JSON.parse; IE does this from version 8 and up, and
 --   everyone else has done it since just about forever.
-module Haste.JSON (JSON (..), encodeJSON, decodeJSON, (!), (~>)) where
-import Haste
+module Haste.JSON (JSON (..), encodeJSON, decodeJSON, toObject, (!), (~>)) where
 import Haste.Prim
 import Data.String as S
+#ifndef __HASTE__
+import Haste.Parsing
+import Control.Applicative
+import Data.Char (ord)
+import Numeric (showHex)
+#endif
+
+-- | Create a Javascript object from a JSON object. Only makes sense in a
+--   browser context, obviously.
+toObject :: JSON -> JSAny
+#ifdef __HASTE__
+toObject = jsJSONParse . encodeJSON
+foreign import ccall jsJSONParse :: JSString -> JSAny
+#else
+toObject j = error $ "Call to toObject in non-browser: " ++ show j
+#endif
+
 
 -- Remember to update jsParseJSON if this data type changes!
 data JSON
@@ -41,9 +57,28 @@ instance Num JSON where
   signum _          = numFail
   fromInteger n     = Num (fromInteger n)
 
+#ifdef __HASTE__
 foreign import ccall "jsShow" jsShowD :: Double -> JSString
-foreign import ccall "jsUnquote" jsUnquote :: JSString -> JSString
+foreign import ccall "jsStringify" jsStringify :: JSString -> JSString
 foreign import ccall "jsParseJSON" jsParseJSON :: JSString -> Ptr (Maybe JSON)
+#else
+jsShowD :: Double -> JSString
+jsShowD = toJSStr . show
+
+jsStringify :: JSString -> JSString
+jsStringify = toJSStr . ('"' :) . unq . fromJSStr
+  where
+    unq ('"' : cs) = "\\\"" ++ unq cs
+    unq (c : cs)
+      | c < ' ' || c > '~' = unicodeChar c (unq cs)
+      | c == '\\'          = "\\\\" ++ unq cs
+      | otherwise          = c : unq cs
+    unq _          = ['"']
+
+    unicodeChar c str =
+      case showHex (ord c) "" of
+        s -> "\\u" ++ replicate (4-length s) '0' ++ s ++ str
+#endif
 
 -- | Look up a JSON object from a JSON dictionary. Panics if the dictionary
 --   isn't a dictionary, or if it doesn't contain the given key.
@@ -80,7 +115,7 @@ encodeJSON = catJSStr "" . enc []
     quote   = "\""
     true    = "true"
     false   = "false"
-    enc acc (Str s)      = quote : jsUnquote s : quote : acc
+    enc acc (Str s)      = jsStringify s : acc
     enc acc (Num d)      = jsShowD d : acc
     enc acc (Bool True)  = true : acc
     enc acc (Bool False) = false : acc
@@ -92,14 +127,54 @@ encodeJSON = catJSStr "" . enc []
     enc acc (Dict elems)
       | ((key,val):xs) <- elems =
         let encElem (k, v) a = comma : quote : k : quote : colon : enc a v
-            encAll = opencu : quote : jsUnquote key : quote : colon : encRest
+            encAll = opencu : jsStringify key : colon : encRest
             encRest  = enc (foldr encElem (closecu:acc) xs) val
         in encAll
       | otherwise =
         opencu : closecu : acc
 
-decodeJSON :: JSString -> Maybe JSON
-decodeJSON = fromPtr . jsParseJSON
+decodeJSON :: JSString -> Either String JSON
+#ifdef __HASTE__
+decodeJSON = liftMaybe . fromPtr . jsParseJSON
+  where
+    liftMaybe (Just x) = Right x
+    liftMaybe _        = Left "Invalid JSON!"
+#else
+decodeJSON = liftMaybe . runParser json . fromJSStr
+  where
+    liftMaybe (Just x) = Right x
+    liftMaybe _        = Left "Invalid JSON!"
+    json = oneOf [Num  <$> double,
+                  Bool <$> boolean,
+                  Str  <$> jsstring,
+                  Arr  <$> array,
+                  Dict <$> object]
+    jsstring = toJSStr <$> oneOf [quotedString '\'', quotedString '"']
+    boolean = oneOf [string "true" >> pure True, string "false" >> pure False]
+    array = do
+      char '[' >> possibly whitespace
+      elements <- commaSeparated json
+      possibly whitespace >> char ']'
+      return elements
+    commaSeparated p =
+      oneOf [do x <- p
+                possibly whitespace >> char ',' >> possibly whitespace
+                xs <- commaSeparated p
+                return (x:xs),
+             do x <- p
+                return [x],
+             do return []]
+    object = do
+      char '{' >> possibly whitespace
+      pairs <- commaSeparated kvPair
+      possibly whitespace >> char '}'
+      return pairs
+    kvPair = do
+      k <- jsstring
+      possibly whitespace >> char ':' >> possibly whitespace
+      v <- json
+      return (k, v)
+#endif
 
 instance Show JSON where
   show = fromJSStr . encodeJSON
