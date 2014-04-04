@@ -168,7 +168,11 @@ prepare dynflags theMod = do
     >>= liftIO . hscSimplify env . coreModule
     >>= liftIO . tidyProgram env
     >>= prepPgm env . fst
+#if __GLASGOW_HASKELL__ >= 707
+    >>= liftIO . coreToStg dynflags (ms_mod theMod)
+#else
     >>= liftIO . coreToStg dynflags
+#endif
   return (pgm, name)
   where
     prepPgm env tidy = liftIO $ do
