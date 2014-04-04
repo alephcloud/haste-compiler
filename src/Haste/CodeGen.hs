@@ -5,6 +5,9 @@ import Control.Applicative
 import Control.Monad
 import Data.Int
 import Data.Bits
+#if __GLASGOW_HASKELL__ >= 707
+import qualified Data.ByteString.Char8 as B8
+#endif
 import Data.Word
 import Data.Char
 import Data.List (partition, foldl')
@@ -456,7 +459,11 @@ dataConNameModule d =
 genLit :: L.Literal -> JSGen Config (AST Exp)
 genLit l = do
   case l of
+#if __GLASGOW_HASKELL__ >= 707
+    MachStr s           -> return . lit $ B8.unpack s
+#else
     MachStr s           -> return . lit $ unpackFS s
+#endif
     MachInt n
       | n > 2147483647 ||
         n < -2147483648 -> do warn Verbose (constFail "Int" n)
