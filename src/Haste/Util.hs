@@ -4,7 +4,10 @@ module Haste.Util where
 import DynFlags
 import Outputable
 
-#if __GLASGOW_HASKELL__ >= 706
+#if __GLASGOW_HASKELL__ >= 707
+showOutputable :: Outputable a => a -> String
+showOutputable = showPpr unsafeGlobalDynFlags
+#elif __GLASGOW_HASKELL__ >= 706
 showOutputable :: Outputable a => a -> String
 showOutputable = showPpr tracingDynFlags
 #else
